@@ -15,8 +15,15 @@ use ark_relations::{
     r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
 };
 
-const NUM_PROVE_REPETITIONS: usize = 1;
-const NUM_VERIFY_REPETITIONS: usize = 50;
+// GRT modify
+use ark_bls12_377::Bls12_377;
+const NUM_PROVE_REPETITIONS: usize = 5;
+const NUM_VERIFY_REPETITIONS: usize = 10;
+// GRT modify
+const MINIMUM_DEGREE: usize = 10;
+const MAXIMUM_DEGREE: usize = 24;
+
+
 const NUM_CONSTRAINTS: usize = (1 << 20) - 100;
 const NUM_VARIABLES: usize = (1 << 20) - 100;
 
@@ -113,7 +120,13 @@ macro_rules! groth16_verify_bench {
         let start = ark_std::time::Instant::now();
 
         for _ in 0..NUM_VERIFY_REPETITIONS {
-            let _ = Groth16::<$bench_pairing_engine>::verify(&vk, &vec![v], &proof).unwrap();
+	//GRT modify
+            let res = Groth16::<$bench_pairing_engine>::verify(&vk, &vec![v], &proof).unwrap();
+            if res {
+                println!("verify ok");
+            }else{
+                println!("verify err");
+            }
         }
 
         println!(
@@ -121,6 +134,28 @@ macro_rules! groth16_verify_bench {
             stringify!($bench_pairing_engine),
             start.elapsed().as_nanos() / NUM_VERIFY_REPETITIONS as u128
         );
+    };
+}
+
+// GRT modify
+macro_rules! groth16_prove_bench_test {
+    ($bench_name:ident, $bench_field:ty, $bench_pairing_engine:ty) => {
+        for num_constraints in MINIMUM_DEGREE..MAXIMUM_DEGREE {
+            let rng = &mut ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
+            let c = DummyCircuit::<$bench_field> {
+                a: Some(<$bench_field>::rand(rng)),
+                b: Some(<$bench_field>::rand(rng)),
+                num_variables:  (1 << num_constraints) - 10,
+                num_constraints:  (1 << num_constraints) - 10,
+            };
+
+            let (pk, _) = Groth16::<$bench_pairing_engine>::circuit_specific_setup(c, rng).unwrap();
+            let _ = Groth16::<$bench_pairing_engine>::prove(&pk, c.clone(), rng).unwrap();
+            for _ in 0..NUM_PROVE_REPETITIONS {
+                let _ = Groth16::<$bench_pairing_engine>::prove(&pk, c.clone(), rng).unwrap();
+            }
+            // println!("###### GRT prove one degree: {:?}; end", num_constraints);
+        }
     };
 }
 
@@ -142,7 +177,15 @@ fn bench_verify() {
     groth16_verify_bench!(mnt6big, MNT6BigFr, MNT6_753);
 }
 
+// GRT modify
+fn bench_prove_test() {
+    use ark_std::rand::SeedableRng;
+    groth16_prove_bench_test!(bls, BlsFr, Bls12_381);
+}
+
+// GRT modify
 fn main() {
-    bench_prove();
-    bench_verify();
+    // bench_prove();
+    // bench_verify();
+    bench_prove_test();
 }

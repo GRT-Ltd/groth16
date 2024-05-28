@@ -1,6 +1,6 @@
 use crate::{r1cs_to_qap::R1CSToQAP, Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::{Field, PrimeField, UniformRand, Zero};
+use ark_ff::{BigInteger, Field, PrimeField, UniformRand, Zero};
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::r1cs::{
     ConstraintMatrices, ConstraintSynthesizer, ConstraintSystem, OptimizationGoal,
@@ -12,6 +12,13 @@ use ark_std::{
     ops::{AddAssign, Mul},
     vec::Vec,
 };
+
+// GRT modify
+use std::time::Instant;
+use ark_ff::BigInteger256;
+use ark_std::iterable::Iterable;
+use msm_cuda::{multi_scalar_mult_arkworks, multi_scalar_mult_fp2_arkworks};
+use crate::util::get_cpu_or_gpu;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -63,7 +70,15 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let h_assignment = cfg_into_iter!(h)
             .map(|s| s.into_bigint())
             .collect::<Vec<_>>();
+
+        // GRT modify
+        let grt_h_acc_time = start_timer!(|| format!("msm h_acc len={}", h_assignment.len() - 1));
+    	#[cfg(not(feature = "cuda"))]
         let h_acc = E::G1::msm_bigint(&pk.h_query, &h_assignment[..h_assignment.len() - 1]);
+	    #[cfg(feature = "cuda")]
+	    let h_acc = multi_scalar_mult_arkworks(&pk.h_query, &h_assignment[..h_assignment.len() - 1]);
+        end_timer!(grt_h_acc_time);
+
         drop(h_assignment);
 
         // Compute C
@@ -71,7 +86,13 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             .map(|s| s.into_bigint())
             .collect::<Vec<_>>();
 
+        // GRT modify
+        let grt_l_aux_acc_time = start_timer!(|| format!("msm {} l_aux_acc len={}", get_cpu_or_gpu(), aux_assignment.len()));
+        #[cfg(not(feature = "cuda"))]
         let l_aux_acc = E::G1::msm_bigint(&pk.l_query, &aux_assignment);
+        #[cfg(feature = "cuda")]
+        let l_aux_acc = multi_scalar_mult_arkworks(&pk.l_query, &aux_assignment);
+        end_timer!(grt_l_aux_acc_time);
 
         let r_s_delta_g1 = pk.delta_g1 * (r * s);
 
@@ -181,7 +202,8 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         C: ConstraintSynthesizer<E::ScalarField>,
         QAP: R1CSToQAP,
     {
-        let prover_time = start_timer!(|| "Groth16::Prover");
+    	// GRT modify
+        // let prover_time = start_timer!(|| "Groth16::Prover");
         let cs = ConstraintSystem::new_ref();
 
         // Set the optimization goal
@@ -197,10 +219,15 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         cs.finalize();
         end_timer!(lc_time);
 
+	    // GRT modify
+        println!("@@ GRT Prove start");
+        let instant_prove = Instant::now();
+        let grt_prover_time = start_timer!(|| "@@ GRT Prove");
         let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
         let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.clone())?;
         end_timer!(witness_map_time);
 
+        let witness_prove_time = start_timer!(|| "Create Proof With Assignment");
         let prover = cs.borrow().unwrap();
         let proof = Self::create_proof_with_assignment(
             pk,
@@ -210,8 +237,10 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             &prover.instance_assignment[1..],
             &prover.witness_assignment,
         )?;
+        end_timer!(witness_prove_time);
 
-        end_timer!(prover_time);
+        end_timer!(grt_prover_time);
+        println!("@@ GRT Prove CONSTRAINTS={} end time = {:?}", prover.witness_assignment.len(), instant_prove.elapsed());
 
         Ok(proof)
     }
@@ -259,7 +288,32 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         G::Group: VariableBaseMSM<MulBase = G>,
     {
         let el = query[0];
-        let acc = G::Group::msm_bigint(&query[1..], assignment);
+	// GRT modify
+        fn get_type_name<T>(_: &T) -> String {
+            std::any::type_name::<T>().to_string()
+        }
+        let mut type_g = "g1";
+        let type_name = get_type_name(&vk_param);
+        if type_name.contains("g2") {
+            type_g = "g2";
+        }
+
+        let mut acc = <G as AffineRepr>::Group::zero();
+        let grt_msm_time = start_timer!(|| format!("msm {} len={}; {}", get_cpu_or_gpu(), type_g, assignment.len()));
+        #[cfg(not(feature = "cuda"))]{
+            acc = G::Group::msm_bigint(&query[1..], assignment);
+        }
+
+        #[cfg(feature = "cuda")]{
+            if type_g == "g1" {
+                acc = multi_scalar_mult_arkworks(&query[1..], assignment);
+            }else if type_g == "g2"{
+                acc = multi_scalar_mult_fp2_arkworks(&query[1..], assignment);
+            }else{
+                panic!("G type err")
+            }
+        }
+        end_timer!(grt_msm_time);
 
         let mut res = initial;
         res.add_assign(&el);

@@ -10,7 +10,8 @@
     missing_docs
 )]
 #![allow(clippy::many_single_char_names, clippy::op_ref)]
-#![forbid(unsafe_code)]
+// GRT modify
+// #![forbid(unsafe_code)]
 
 #[macro_use]
 extern crate ark_std;
@@ -40,6 +41,9 @@ pub mod constraints;
 
 #[cfg(test)]
 mod test;
+
+/// grt modify
+pub mod util;
 
 pub use self::data_structures::*;
 pub use self::verifier::*;

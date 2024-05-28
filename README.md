@@ -13,23 +13,47 @@ This library is released under the MIT License and the Apache v2 License (see [L
 
 **WARNING:** This is an academic proof-of-concept prototype, and in particular has not received careful code review. This implementation is NOT ready for production use.
 
-## Build guide
+## Build guide 
 
 The library compiles on the `stable` toolchain of the Rust compiler. To install the latest version of Rust, first install `rustup` by following the instructions [here](https://rustup.rs/), or via your platform's package manager. Once `rustup` is installed, install the Rust toolchain by invoking:
 ```bash
 rustup install stable
 ```
 
-After that, use `cargo`, the standard Rust build tool, to build the library:
+After that, use `cargo`, clone repository:
 ```bash
-git clone https://github.com/arkworks-rs/groth16.git
-cargo build --release
+git clone https://github.com/GRT-Ltd/groth16.git
+```
+
+Run bench by cpu
+
+```besh
+cargo bench
+```
+
+Run bench by gpu
+
+```
+cargo bench --features "cuda"
 ```
 
 This library comes with unit tests for each of the provided crates. Run the tests with:
+
 ```bash
 cargo test
 ```
+
+
+
+## Modified by GRT 
+
+Add **CUDA** code to **FFT** and **MSM**,  add log printing,  detailed code can be found in the project is as follows:
+
+```rust
+// GRT modify
+```
+
+
 
 ## License
 

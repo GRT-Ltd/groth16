@@ -29,6 +29,13 @@ derivative = { version = "2.0", features = ["use_core"], optional = true}
 
 rayon = { version = "1", optional = true }
 
+# GRT modify
+sppark = "0.1.6"
+ntt-cuda = { path = "ext/ntt-cuda" }
+msm-cuda = { path = "ext/msm-cuda", default-features = false, features = ["bls12_381"] }
+#ark-bls12-381 = { version = "0.4.0", optional = false }
+ark-bls12-381 = { version = "0.4.0", default-features = false, features = ["curve"] }
+
 [dev-dependencies]
 csv = { version = "1" }
 ark-bls12-381 = { version = "0.4.0", default-features = false, features = ["curve"] }
@@ -46,6 +53,8 @@ std = ["ark-ff/std", "ark-ec/std", "ark-poly/std", "ark-relations/std", "ark-cry
 parallel = ["std", "ark-ff/parallel", "ark-poly/parallel", "ark-ec/parallel", "ark-crypto-primitives/parallel", "ark-std/parallel", "rayon"]
 r1cs = [ "ark-crypto-primitives/r1cs", "ark-r1cs-std", "tracing", "derivative" ]
 print-trace = [ "ark-std/print-trace" ]
+# GRT modify
+cuda = []
 
 [[bench]]
 name = "groth16-benches"
@@ -53,30 +62,31 @@ path = "benches/bench.rs"
 harness = false
 required-features = ["std"]
 
-[profile.release]
-opt-level = 3
-lto = "thin"
-incremental = true
-panic = 'abort'
+# GRT modify
+#[profile.release]
+#opt-level = 3
+#lto = "thin"
+#incremental = true
+#panic = 'abort'
+#
+#[profile.bench]
+#opt-level = 3
+#debug = false
+#rpath = false
+#lto = "thin"
+#incremental = true
+#debug-assertions = false
 
-[profile.bench]
-opt-level = 3
-debug = false
-rpath = false
-lto = "thin"
-incremental = true
-debug-assertions = false
+#[profile.dev]
+#opt-level = 0
+#panic = 'abort'
 
-[profile.dev]
-opt-level = 0
-panic = 'abort'
-
-[profile.test]
-opt-level = 3
-lto = "thin"
-incremental = true
-debug-assertions = true
-debug = true
+#[profile.test]
+#opt-level = 3
+#lto = "thin"
+#incremental = false
+#debug-assertions = false
+#debug = false
 
 
 [patch.crates-io]
@@ -97,3 +107,5 @@ ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitive
 
 ark-relations = { git = "https://github.com/arkworks-rs/snark/" }
 ark-snark = { git = "https://github.com/arkworks-rs/snark/" }
+# GRT modify
+sppark = { path = "ext/sppark-0.1.6" }

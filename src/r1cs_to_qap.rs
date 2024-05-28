@@ -11,6 +11,13 @@ use core::ops::{AddAssign, Deref};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+// GRT modify
+const DEFAULT_GPU: usize = 0;
+use sppark::NTTInputOutputOrder;
+use crate::util::get_cpu_or_gpu;
+use std::time::Instant;
+
+
 #[inline]
 /// Computes the inner product of `terms` with `assignment`.
 pub fn evaluate_constraint<'a, LHS, RHS, R>(terms: &'a [(LHS, usize)], assignment: &'a [RHS]) -> R
@@ -58,18 +65,32 @@ pub trait R1CSToQAP {
     fn witness_map<F: PrimeField, D: EvaluationDomain<F>>(
         prover: ConstraintSystemRef<F>,
     ) -> Result<Vec<F>, SynthesisError> {
+        let grt_time_all = start_timer!(|| "Init Instance Assignment && Witness Assignment");
+        
+	let grt_time = start_timer!(|| "Init Instance Assignment && Witness Assignment to_matrices");
         let matrices = prover.to_matrices().unwrap();
-        let num_inputs = prover.num_instance_variables();
+        end_timer!(grt_time);
+        
+	let num_inputs = prover.num_instance_variables();
         let num_constraints = prover.num_constraints();
 
+        let grt_time = start_timer!(|| "Init Instance Assignment && Witness Assignment borrow");
         let cs = prover.borrow().unwrap();
-        let prover = cs.deref();
+        end_timer!(grt_time);
 
+        let grt_time = start_timer!(|| "Init Instance Assignment && Witness Assignment deref");
+        let prover = cs.deref();
+        end_timer!(grt_time);
+
+        let grt_time = start_timer!(|| "Init Instance Assignment && Witness Assignment concat");
         let full_assignment = [
             prover.instance_assignment.as_slice(),
             prover.witness_assignment.as_slice(),
         ]
         .concat();
+        end_timer!(grt_time);
+        
+	end_timer!(grt_time_all);
 
         Self::witness_map_from_matrices::<F, D>(
             &matrices,
@@ -153,6 +174,7 @@ impl R1CSToQAP for LibsnarkReduction {
         num_constraints: usize,
         full_assignment: &[F],
     ) -> R1CSResult<Vec<F>> {
+        let grt_time = start_timer!(|| "Computes the inner product of `terms` with `assignment`");
         let domain =
             D::new(num_constraints + num_inputs).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
         let domain_size = domain.size();
@@ -175,29 +197,76 @@ impl R1CSToQAP for LibsnarkReduction {
             let end = start + num_inputs;
             a[start..end].clone_from_slice(&full_assignment[..num_inputs]);
         }
+        end_timer!(grt_time);
 
+
+	// GRT modify
+        let grt_a_time = start_timer!(|| format!("ifft {} a len={}", get_cpu_or_gpu(), a.len()));
+        #[cfg(not(feature = "cuda"))]
         domain.ifft_in_place(&mut a);
+        #[cfg(feature = "cuda")]
+        ntt_cuda::iNTT(DEFAULT_GPU, &mut a, NTTInputOutputOrder::NN);
+        end_timer!(grt_a_time);
+	
+	// GRT modify
+        let grt_b_time = start_timer!(|| format!("ifft {} b len={}", get_cpu_or_gpu(), b.len()));
+        #[cfg(not(feature = "cuda"))]
         domain.ifft_in_place(&mut b);
+        #[cfg(feature = "cuda")]
+        ntt_cuda::iNTT(DEFAULT_GPU, &mut b, NTTInputOutputOrder::NN);
+        end_timer!(grt_b_time);
+        
+	let coset_domain = domain.get_coset(F::GENERATOR).unwrap();
 
-        let coset_domain = domain.get_coset(F::GENERATOR).unwrap();
-
+	// GRT modify
+        let grt_a_time = start_timer!(|| format!("fft {} a len={}", get_cpu_or_gpu(), a.len()));
+        #[cfg(not(feature = "cuda"))]
         coset_domain.fft_in_place(&mut a);
-        coset_domain.fft_in_place(&mut b);
+        #[cfg(feature = "cuda")]
+        ntt_cuda::coset_NTT(DEFAULT_GPU, &mut a, NTTInputOutputOrder::NN);
+        end_timer!(grt_a_time);
 
+	// GRT modify
+        let grt_b_time = start_timer!(|| format!("fft {} a len={}", get_cpu_or_gpu(), b.len()));
+        #[cfg(not(feature = "cuda"))]
+        coset_domain.fft_in_place(&mut b);
+        #[cfg(feature = "cuda")]
+        ntt_cuda::coset_NTT(DEFAULT_GPU, &mut b, NTTInputOutputOrder::NN);
+        end_timer!(grt_b_time);
+
+        let grt_ab_time = start_timer!(|| format!("mul_polynomials_in_evaluation_domain a b len={}", a.len()));
         let mut ab = domain.mul_polynomials_in_evaluation_domain(&a, &b);
-        drop(a);
+        end_timer!(grt_ab_time);
+        
+	drop(a);
         drop(b);
 
+        let grt_c_time = start_timer!(|| format!("evaluate_constraint c len={}", domain_size));
         let mut c = vec![zero; domain_size];
         cfg_iter_mut!(c[..num_constraints])
             .enumerate()
             .for_each(|(i, c)| {
                 *c = evaluate_constraint(&matrices.c[i], &full_assignment);
             });
-
+        end_timer!(grt_c_time);
+	    
+	// GRT modify
+        let grt_c_time = start_timer!(|| format!("ifft {} c len={}", get_cpu_or_gpu(), c.len()));
+        #[cfg(not(feature = "cuda"))]
         domain.ifft_in_place(&mut c);
-        coset_domain.fft_in_place(&mut c);
+        #[cfg(feature = "cuda")]
+        ntt_cuda::iNTT(DEFAULT_GPU, &mut c, NTTInputOutputOrder::NN);
+        end_timer!(grt_c_time);
 
+	// GRT modify
+        let grt_c_time = start_timer!(|| format!("fft {} c len={}", get_cpu_or_gpu(), c.len()));
+        #[cfg(not(feature = "cuda"))]
+        coset_domain.fft_in_place(&mut c);
+        #[cfg(feature = "cuda")]
+        ntt_cuda::coset_NTT(DEFAULT_GPU, &mut c, NTTInputOutputOrder::NN);
+        end_timer!(grt_c_time);
+
+        let grt_vanishing_time = start_timer!(|| format!("vanishing_polynomial_over_coset len={}", domain_size));
         let vanishing_polynomial_over_coset = domain
             .evaluate_vanishing_polynomial(F::GENERATOR)
             .inverse()
@@ -206,10 +275,17 @@ impl R1CSToQAP for LibsnarkReduction {
             *ab_i -= &c_i;
             *ab_i *= &vanishing_polynomial_over_coset;
         });
+        end_timer!(grt_vanishing_time);
 
+	// GRT modify
+        let grt_ab_time = start_timer!(|| format!("ifft {} ab len={}", get_cpu_or_gpu(), ab.len()));
+        #[cfg(not(feature = "cuda"))]
         coset_domain.ifft_in_place(&mut ab);
-
-        Ok(ab)
+        #[cfg(feature = "cuda")]
+        ntt_cuda::coset_iNTT(DEFAULT_GPU, &mut ab, NTTInputOutputOrder::NN);
+        end_timer!(grt_ab_time);
+        
+	Ok(ab)
     }
 
     fn h_query_scalars<F: PrimeField, D: EvaluationDomain<F>>(
